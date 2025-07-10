@@ -20,9 +20,9 @@ func commandExit(c *pokeapi.Config) error {
 }
 
 func commandHelp(c *pokeapi.Config) error {
-	fmt.Println(`Welcome to the Pokedex!
-Usage:
-`)
+	fmt.Println("Welcome to the Pokedex!")
+	fmt.Println("Usage:")
+	fmt.Println()
 	for _, v := range commandRegistry {
 		fmt.Printf("%s: %s\n", v.name, v.description)
 	}
