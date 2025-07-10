@@ -13,13 +13,13 @@ func cleanInput(text string) []string {
 	return cleanedText
 }
 
-func commandExit(c *pokeapi.Config) error {
+func commandExit(c *pokeapi.Config, arg string) error {
 	fmt.Println("Closing the Pokedex... Goodbye!")
 	os.Exit(0)
 	return nil
 }
 
-func commandHelp(c *pokeapi.Config) error {
+func commandHelp(c *pokeapi.Config, arg string) error {
 	fmt.Println("Welcome to the Pokedex!")
 	fmt.Println("Usage:")
 	fmt.Println()
@@ -45,18 +45,34 @@ func commandMapMain(c *pokeapi.Config, next bool) error {
 	return nil
 }
 
-func commandMap(c *pokeapi.Config) error {
+func commandMap(c *pokeapi.Config, arg string) error {
 	return commandMapMain(c, true)
 }
 
-func commandMapBack(c *pokeapi.Config) error {
+func commandMapBack(c *pokeapi.Config, arg string) error {
 	return commandMapMain(c, false)
+}
+
+func commandExplore(c *pokeapi.Config, arg string) error {
+	if arg == "" {
+		fmt.Println("No location provided")
+		return nil
+	}
+	pokemons, err := pokeapi.GetPokemonsInArea(arg)
+	if err != nil {
+		return err
+	}
+
+	for _, v := range pokemons {
+		fmt.Println(v)
+	}
+	return nil
 }
 
 type CliCommand struct {
 	name        string
 	description string
-	callback    func(conf *pokeapi.Config) error
+	callback    func(conf *pokeapi.Config, arg string) error
 }
 
 var commandRegistry map[string]CliCommand = make(map[string]CliCommand)
@@ -86,6 +102,11 @@ func initCommands() {
 		description: "Search for previous location areas",
 		callback:    commandMapBack,
 	}
+	commandRegistry["explore"] = CliCommand{
+		name:        "explore",
+		description: "Explore a location area",
+		callback:    commandExplore,
+	}
 }
 
 func startREPL() {
@@ -103,11 +124,17 @@ func startREPL() {
 		}
 
 		command, ok := commandRegistry[cleanedInput[0]]
+		var option string
+		if len(cleanedInput) == 2 {
+			option = cleanedInput[1]
+		} else {
+			option = ""
+		}
 		if !ok {
 			fmt.Println("Unknown command. Type help to see usage")
 			continue
 		} else {
-			err := command.callback(config)
+			err := command.callback(config, option)
 			if err != nil {
 				fmt.Println(err)
 			}
