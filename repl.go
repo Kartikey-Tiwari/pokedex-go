@@ -3,9 +3,11 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"github.com/kartikey-tiwari/pokedex-go/internal/pokeapi"
+	"math/rand/v2"
 	"os"
 	"strings"
+
+	"github.com/kartikey-tiwari/pokedex-go/internal/pokeapi"
 )
 
 func cleanInput(text string) []string {
@@ -69,6 +71,61 @@ func commandExplore(c *pokeapi.Config, arg string) error {
 	return nil
 }
 
+func commandCatch(c *pokeapi.Config, arg string) error {
+	if arg == "" {
+		fmt.Println("No pokemon provided")
+		return nil
+	}
+	fmt.Println("Throwing a Pokeball at " + arg + "...")
+	pokemon, err := pokeapi.GetPokemonInformation(arg)
+	if err != nil {
+		return err
+	}
+	baseXp := pokemon.BaseExperience
+	caught := rand.IntN(650)+1 > baseXp
+	if caught {
+		pokedex[arg] = pokemon
+		fmt.Println(arg + " was caught!")
+		fmt.Println("You may now inspect it with the inspect command")
+	} else {
+		fmt.Println(arg + " escaped!")
+	}
+	return nil
+}
+
+func commandInspect(c *pokeapi.Config, arg string) error {
+	pokemon, ok := pokedex[arg]
+	if !ok {
+		fmt.Println("you have not caught that pokemon")
+		return nil
+	}
+	fmt.Println("Name:", pokemon.Name)
+	fmt.Println("Height:", pokemon.Height)
+	fmt.Println("Weight:", pokemon.Weight)
+	fmt.Println("Stats:")
+	for _, v := range pokemon.Stats {
+		fmt.Printf("  -%s: %d\n", v.Stat.Name, v.BaseStat)
+	}
+	fmt.Println("Types:")
+	for _, v := range pokemon.Types {
+		fmt.Println("  -", v.Type.Name)
+	}
+	return nil
+}
+
+func commandPokedex(c *pokeapi.Config, arg string) error {
+	if len(pokedex) == 0 {
+		fmt.Println("You haven't caught any pokemons yet")
+		return nil
+	}
+
+	fmt.Println("Your Pokedex:")
+	for _, v := range pokedex {
+		fmt.Println(" -", v.Name)
+	}
+	return nil
+}
+
 type CliCommand struct {
 	name        string
 	description string
@@ -80,6 +137,7 @@ var config *pokeapi.Config = &pokeapi.Config{
 	Next:     "https://pokeapi.co/api/v2/location-area?limit=20&offset=0",
 	Previous: "",
 }
+var pokedex map[string]pokeapi.PokemonResponse = map[string]pokeapi.PokemonResponse{}
 
 func initCommands() {
 	commandRegistry["help"] = CliCommand{
@@ -106,6 +164,21 @@ func initCommands() {
 		name:        "explore",
 		description: "Explore a location area",
 		callback:    commandExplore,
+	}
+	commandRegistry["catch"] = CliCommand{
+		name:        "catch",
+		description: "Try to catch a pokemon",
+		callback:    commandCatch,
+	}
+	commandRegistry["inspect"] = CliCommand{
+		name:        "inspect",
+		description: "Display caught pokemon information",
+		callback:    commandInspect,
+	}
+	commandRegistry["pokedex"] = CliCommand{
+		name:        "pokedex",
+		description: "Display names of caught pokemons",
+		callback:    commandPokedex,
 	}
 }
 
