@@ -5,10 +5,14 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/kartikey-tiwari/pokedex-go/internal/pokeapi"
 )
+
+const HIST_FILENAME = ".pokedex_history"
+const HIST_SIZE = 1000
 
 func cleanInput(text string) []string {
 	cleanedText := strings.Fields(strings.ToLower(text))
@@ -17,6 +21,7 @@ func cleanInput(text string) []string {
 
 func commandExit(c *pokeapi.Config, arg string) error {
 	fmt.Println("Closing the Pokedex... Goodbye!")
+	histFile.Close()
 	os.Exit(0)
 	return nil
 }
@@ -126,6 +131,15 @@ func commandPokedex(c *pokeapi.Config, arg string) error {
 	return nil
 }
 
+func commandHistory(c *pokeapi.Config, option string) error {
+	width := len(fmt.Sprintf("%d", len(history)))
+
+	for i, v := range history {
+		fmt.Printf("%*d. %s\n", width, i+1, v)
+	}
+	return nil
+}
+
 type CliCommand struct {
 	name        string
 	description string
@@ -138,6 +152,8 @@ var config *pokeapi.Config = &pokeapi.Config{
 	Previous: "",
 }
 var pokedex map[string]pokeapi.PokemonResponse = map[string]pokeapi.PokemonResponse{}
+var history []string = []string{}
+var histFile *os.File
 
 func initCommands() {
 	commandRegistry["help"] = CliCommand{
@@ -180,16 +196,51 @@ func initCommands() {
 		description: "Display names of caught pokemons",
 		callback:    commandPokedex,
 	}
+	commandRegistry["history"] = CliCommand{
+		name:        "history",
+		description: "Displays previous commands",
+		callback:    commandHistory,
+	}
+}
+
+func loadHistory() {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	filePath := filepath.Join(home, HIST_FILENAME)
+
+	histFile, err = os.OpenFile(filePath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		histFile = nil
+		return
+	}
+
+	scanner := bufio.NewScanner(histFile)
+	for scanner.Scan() {
+		text := scanner.Text()
+		history = append(history, text)
+	}
 }
 
 func startREPL() {
 	initCommands()
+	loadHistory()
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
 		fmt.Print("Pokedex > ")
 
-		scanner.Scan()
+		if !scanner.Scan() {
+			fmt.Println()
+			commandExit(config, "")
+		}
 		input := scanner.Text()
+
+		trimmedInput := strings.TrimSpace(input) + "\n"
+		history = append(history, trimmedInput)
+		if histFile != nil {
+			histFile.WriteString(trimmedInput)
+		}
 
 		cleanedInput := cleanInput(input)
 		if len(cleanedInput) == 0 {
@@ -204,7 +255,7 @@ func startREPL() {
 			option = ""
 		}
 		if !ok {
-			fmt.Println("Unknown command. Type help to see usage")
+			fmt.Println("Unknown command. Type help to see list of commands.")
 			continue
 		} else {
 			err := command.callback(config, option)
@@ -212,5 +263,6 @@ func startREPL() {
 				fmt.Println(err)
 			}
 		}
+
 	}
 }
