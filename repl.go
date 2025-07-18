@@ -3,16 +3,124 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/kartikey-tiwari/pokedex-go/internal/pokeapi"
 )
 
 const HIST_FILENAME = ".pokedex_history"
-const HIST_SIZE = 1000
+const HIST_SIZE = 5
+
+var historyIndex int
+var currentInput string
+var modifications map[int]string
+
+func enableRawMode() {
+	exec.Command("stty", "-F", "/dev/tty", "cbreak", "min", "1").Run()
+	exec.Command("stty", "-F", "/dev/tty", "-echo").Run()
+}
+
+func restoreNormalTTYSettings() {
+	exec.Command("stty", "-F", "/dev/tty", "echo").Run()
+	exec.Command("stty", "-F", "/dev/tty", "-cbreak").Run()
+}
+
+func readInput(prompt string) (string, bool) {
+	fmt.Print(prompt)
+
+	var input []byte
+	historyIndex = len(history)
+	currentInput = ""
+	if modifications == nil {
+		modifications = make(map[int]string)
+	}
+
+	for {
+		char := make([]byte, 1)
+		n, err := os.Stdin.Read(char)
+		if n == 0 || err != nil { // EOF
+			fmt.Println()
+			return "", false
+		}
+
+		switch char[0] {
+		case 10, 13: // Enter
+			{
+				fmt.Println()
+				modifications = make(map[int]string)
+				return string(input), true
+			}
+		case 27: // Escape
+			{
+				seq := make([]byte, 2)
+				os.Stdin.Read(seq)
+				if seq[0] == 91 {
+					switch seq[1] {
+					case 65: // Up arrow
+						{
+							if historyIndex == len(history) {
+								currentInput = string(input)
+							} else {
+								modifications[historyIndex] = string(input)
+							}
+
+							if historyIndex > 0 {
+								historyIndex--
+								if modifiedCommand, exists := modifications[historyIndex]; exists {
+									input = []byte(modifiedCommand)
+								} else {
+									histEntry := strings.TrimSpace(history[historyIndex])
+									input = []byte(histEntry)
+								}
+								fmt.Print("\r\033[K" + prompt + string(input))
+							}
+						}
+					case 66: // down arrow
+						{
+							if historyIndex < len(history)-1 {
+								modifications[historyIndex] = string(input)
+								historyIndex++
+
+								if modifiedCmd, exists := modifications[historyIndex]; exists {
+									input = []byte(modifiedCmd)
+								} else {
+									histEntry := strings.TrimSpace(history[historyIndex])
+									input = []byte(histEntry)
+								}
+								fmt.Print("\r\033[K" + prompt + string(input))
+							} else if historyIndex == len(history)-1 {
+								modifications[historyIndex] = string(input)
+								historyIndex = len(history)
+								input = []byte(currentInput)
+								fmt.Print("\r\033[K" + prompt + string(input))
+							}
+						}
+					}
+				}
+			}
+		case 127: // Backspace
+			if len(input) > 0 {
+				input = input[:len(input)-1]
+				fmt.Print("\b \b")
+			}
+		case 3, 4: // SIGINT, EOF
+			commandExit(config, "")
+
+		default:
+			if char[0] >= 32 && char[0] <= 126 {
+				input = append(input, char[0])
+				fmt.Print(string(char[0]))
+			}
+		}
+	}
+}
 
 func cleanInput(text string) []string {
 	cleanedText := strings.Fields(strings.ToLower(text))
@@ -21,7 +129,26 @@ func cleanInput(text string) []string {
 
 func commandExit(c *pokeapi.Config, arg string) error {
 	fmt.Println("Closing the Pokedex... Goodbye!")
-	histFile.Close()
+	if histFile != nil {
+		if len(history) > HIST_SIZE {
+			histFile.Seek(0, io.SeekStart)
+			history = history[len(history)-HIST_SIZE:]
+			var totalBytes int64 = 0
+			didBreak := false
+			for _, entry := range history {
+				n, err := histFile.WriteString(entry + "\n")
+				if err != nil {
+					didBreak = true
+				}
+				totalBytes += int64(n)
+			}
+			if !didBreak {
+				histFile.Truncate(totalBytes)
+			}
+		}
+		histFile.Close()
+	}
+	restoreNormalTTYSettings()
 	os.Exit(0)
 	return nil
 }
@@ -210,12 +337,13 @@ func loadHistory() {
 	}
 	filePath := filepath.Join(home, HIST_FILENAME)
 
-	histFile, err = os.OpenFile(filePath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
+	histFile, err = os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		histFile = nil
 		return
 	}
 
+	histFile.Seek(0, io.SeekStart)
 	scanner := bufio.NewScanner(histFile)
 	for scanner.Scan() {
 		text := scanner.Text()
@@ -224,22 +352,29 @@ func loadHistory() {
 }
 
 func startREPL() {
+	defer restoreNormalTTYSettings()
+	enableRawMode()
 	initCommands()
 	loadHistory()
-	scanner := bufio.NewScanner(os.Stdin)
-	for {
-		fmt.Print("Pokedex > ")
 
-		if !scanner.Scan() {
-			fmt.Println()
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-sigs
+		commandExit(config, "")
+	}()
+
+	for {
+		input, ok := readInput("Pokedex > ")
+		if !ok {
 			commandExit(config, "")
 		}
-		input := scanner.Text()
 
-		trimmedInput := strings.TrimSpace(input) + "\n"
+		trimmedInput := strings.TrimSpace(input)
 		history = append(history, trimmedInput)
 		if histFile != nil {
-			histFile.WriteString(trimmedInput)
+			histFile.WriteString(trimmedInput + "\n")
 		}
 
 		cleanedInput := cleanInput(input)
